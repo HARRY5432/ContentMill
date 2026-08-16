@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""
+Tests for build_shorts.py — no ffmpeg needed (it's faked in-process).
+
+Run with:  python test_pipeline.py
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import types
+
+import build_shorts as bs
+
+REAL_CONFIG_PATH = os.path.abspath(bs.CONFIG_PATH)  # snapshot before tests monkeypatch it
+ORIG_STABILITY_CHECK = bs.file_is_stable
+
+
+def fake_run(cmd, capture_output=False, text=False):
+    """Pretend ffmpeg ran: create the output file (last arg), return success."""
+    out = cmd[-1]
+    with open(out, "w") as f:
+        f.write("fake")
+    return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+
+def make_files(folder, names):
+    for n in names:
+        with open(os.path.join(folder, n), "w") as f:
+            f.write("x")
+
+
+def load_real_config():
+    with open(REAL_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def setup():
+    """Temp project with a config.json and recordings/ folder."""
+    tmp = tempfile.mkdtemp(prefix="autoclip_test_")
+    cfg = load_real_config()
+    with open(os.path.join(tmp, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+    os.makedirs(os.path.join(tmp, "recordings"), exist_ok=True)
+    return tmp
+
+
+def test_one_shot_rounds_of_three():
+    tmp = setup()
+    rec = os.path.join(tmp, "recordings")
+    out = os.path.join(tmp, "composited")
+    os.makedirs(out, exist_ok=True)
+    make_files(rec, ["a01.mp4", "a02.mp4", "a03.mp4", "a04.mp4", "a05.mp4", "a06.mp4"])
+
+    bs.HERE = tmp
+    bs.CONFIG_PATH = os.path.join(tmp, "config.json")
+    bs.subprocess.run = fake_run
+
+    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, None,
+                                  dry_run=False, force=False, watch=False)
+
+    assert len(manifest) == 2, f"expected 2 shorts, got {len(manifest)}"
+    assert manifest[0]["short"] == "short_001.mp4"
+    assert manifest[0]["inputs"] == ["a01.mp4", "a02.mp4", "a03.mp4"], manifest[0]
+    assert manifest[1]["inputs"] == ["a04.mp4", "a05.mp4", "a06.mp4"], manifest[1]
+    assert os.path.exists(os.path.join(out, "short_001.mp4"))
+    assert os.path.exists(os.path.join(out, "short_002.mp4"))
+    print("PASS one-shot: 6 files -> 2 shorts, grouped in threes")
+    shutil.rmtree(tmp)
+
+
+def test_incremental_adds_only_new_files():
+    tmp = setup()
+    rec = os.path.join(tmp, "recordings")
+    out = os.path.join(tmp, "composited")
+    os.makedirs(out, exist_ok=True)
+    make_files(rec, ["b01.mp4", "b02.mp4", "b03.mp4"])
+
+    bs.HERE = tmp
+    bs.CONFIG_PATH = os.path.join(tmp, "config.json")
+    bs.subprocess.run = fake_run
+
+    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, None,
+                                  dry_run=False, force=False, watch=False)
+    assert len(manifest) == 1
+
+    # user adds 3 more clips and runs again
+    make_files(rec, ["b04.mp4", "b05.mp4", "b06.mp4"])
+    manifest = bs.process_pending(bs.load_config(), rec, out, manifest, None, None,
+                                  dry_run=False, force=False, watch=False)
+    assert len(manifest) == 2, f"expected 2 shorts after re-run, got {len(manifest)}"
+    assert manifest[1]["inputs"] == ["b04.mp4", "b05.mp4", "b06.mp4"]
+    assert os.path.exists(os.path.join(out, "short_002.mp4"))
+    print("PASS incremental: re-run only processes new clips")
+    shutil.rmtree(tmp)
+
+
+def test_watch_builds_group_and_waits_for_rest():
+    tmp = setup()
+    rec = os.path.join(tmp, "recordings")
+    out = os.path.join(tmp, "composited")
+    os.makedirs(out, exist_ok=True)
+    make_files(rec, ["c01.mp4", "c02.mp4", "c03.mp4", "c04.mp4"])
+
+    bs.HERE = tmp
+    bs.CONFIG_PATH = os.path.join(tmp, "config.json")
+    bs.subprocess.run = fake_run
+    bs.file_is_stable = lambda p: True  # files are already fully written
+
+    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, None,
+                                  dry_run=False, force=False, watch=True)
+    # 4 new files: first 3 become a short, the 4th waits
+    assert len(manifest) == 1, f"expected 1 short from 4 files, got {len(manifest)}"
+    assert manifest[0]["inputs"] == ["c01.mp4", "c02.mp4", "c03.mp4"]
+
+    # two more arrive -> now the leftover + 2 = a full group
+    make_files(rec, ["c05.mp4", "c06.mp4"])
+    manifest = bs.process_pending(bs.load_config(), rec, out, manifest, None, None,
+                                  dry_run=False, force=False, watch=True)
+    assert len(manifest) == 2, f"expected 2 shorts, got {len(manifest)}"
+    assert manifest[1]["inputs"] == ["c04.mp4", "c05.mp4", "c06.mp4"]
+    print("PASS watch: builds full groups, waits for partial groups")
+    shutil.rmtree(tmp)
+
+
+def test_stability_check():
+    bs.file_is_stable = ORIG_STABILITY_CHECK  # undo the watch-test monkeypatch
+    tmp = tempfile.mkdtemp(prefix="autoclip_stab_")
+    p = os.path.join(tmp, "stable.mp4")
+    with open(p, "w") as f:
+        f.write("done")
+    assert bs.file_is_stable(p) is True, "finished file should be stable"
+
+    q = os.path.join(tmp, "growing.mp4")
+    with open(q, "w") as f:
+        f.write("a")
+    # simulate a file still being written: it changes size between checks
+    orig = bs.time.sleep
+    try:
+        calls = {"n": 0}
+        def fake_sleep(sec):
+            calls["n"] += 1
+            with open(q, "a") as f:
+                f.write("more data")
+        bs.time.sleep = fake_sleep
+        assert bs.file_is_stable(q) is False, "growing file should be unstable"
+    finally:
+        bs.time.sleep = orig
+    print("PASS stability: growing files are detected and skipped")
+    shutil.rmtree(tmp)
+
+
+if __name__ == "__main__":
+    test_one_shot_rounds_of_three()
+    test_incremental_adds_only_new_files()
+    test_watch_builds_group_and_waits_for_rest()
+    test_stability_check()
+    print("\nAll tests passed.")

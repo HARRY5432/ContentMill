@@ -1,86 +1,85 @@
-# 3-up Shorts Pipeline
+# Autoclip — autonomous 9:16 shorts
 
-Turns your screen recordings into **9:16 vertical shorts automatically**:
+Turns your screen recordings into **finished, upload-ready vertical shorts — automatically, no Premiere Pro needed.**
 
 - Each short = **3 clips playing at once**, stacked vertically (top / middle / bottom thirds)
 - Every clip is sped up **10,000% (100×)**
-- Each short is **10 seconds** long
-- A Premiere Pro script then assembles them into a **1080×1920 timeline** and can auto-export
-
-The heavy lifting (speed + layout) happens in **ffmpeg** so it's fast and reliable; the
-Premiere script just creates the sequence, imports the finished clips, and places them.
+- Each short is **10 seconds** long, 1080×1920 (9:16)
+- Drop clips into a folder, and shorts come out the other end, one by one
 
 ## How it works
 
 ```
-recordings/          your raw recordings (any order; every 3 files = 1 short)
+recordings/          ← you drop your recordings here (any time, any amount)
    │
-   │  python build_shorts.py          ← speeds 100x, stacks 3-up, trims to 10s
+   │  python build_shorts.py --watch     ← runs in the background
    ▼
-composited/          short_001.mp4, short_002.mp4, ...  (already 1080x1920, 3 rows)
-   │
-   │  process_shorts.jsx in Premiere  ← creates 9:16 sequence, imports, places, exports
-   ▼
-Finished 9:16 sequence (one short after another, 10s each)
+composited/          short_001.mp4, short_002.mp4, ...  ← finished shorts
 ```
+
+Every **3 recordings = 1 short** (file1+2+3 → short_001, 4+5+6 → short_002, …).
+The 3 clips of a short play **at the same time** — they show the same 10 seconds
+from three recordings (e.g. three screens or three takes).
+
+The script remembers what it already processed (`composited/manifest.json`), so it
+only ever works on new clips. You can add files mid-run and it picks them up.
 
 ## 1. Install once
 
-1. **Install ffmpeg** (the only dependency — Python comes with most systems, or install it):
+1. **Install ffmpeg** (the only dependency — Python ships with most systems, or install it):
    - Windows: `winget install ffmpeg` (or https://ffmpeg.org/download.html)
    - macOS: `brew install ffmpeg`
    - Verify with `ffmpeg -version`.
-2. **Put your recordings** in the `recordings/` folder. Supported: `.mp4 .mov .mkv .avi .mxf .ts .webm .m4v`.
-   - Files are processed in name order, **every 3 files = one short** (file1+2+3 → short_001, 4+5+6 → short_002, …).
-   - The 3 files of a short play **at the same time** — they show the same 10 seconds of
-     your session from three recordings (e.g. three screens, or three takes).
+2. Put your recordings in the `recordings/` folder. Supported: `.mp4 .mov .mkv .avi .mxf .ts .webm .m4v`.
 
-## 2. Batch step (terminal)
+## 2. Run it
+
+**Watch mode (recommended)** — leave this running, drop clips in anytime:
+
+```bash
+python build_shorts.py --watch
+```
+
+Every time 3 new recordings finish appearing, it builds the next short and keeps
+waiting. Press `Ctrl+C` to stop.
+
+**One-shot mode** — process whatever's new right now and exit:
 
 ```bash
 python build_shorts.py
 ```
 
-That creates `composited/short_001.mp4` etc. Run `python build_shorts.py --dry-run`
-to preview the ffmpeg commands, or `--force` to redo existing outputs.
+Other flags: `--dry-run` (preview commands), `--force` (rebuild everything).
+
+## 3. Grab your shorts
+
+Finished shorts appear in `composited/` — `short_001.mp4`, `short_002.mp4`, …
+Each one is a complete 1080×1920 video, ready to upload.
 
 > **Duration math:** at 100× speed, a 10-second short consumes **1,000 seconds (~17 min)**
 > of recording per input. If a recording is shorter, the short comes out shorter — the
 > script warns you about this.
 
-## 3. Assemble in Premiere Pro
-
-1. Copy `premiere/process_shorts.jsx` to Premiere's ScriptUI Panels folder:
-   - Windows: `C:\Program Files\Adobe\Adobe Premiere Pro <version>\Support Files\Scripts\ScriptUI Panels\`
-   - macOS: `/Applications/Adobe Premiere Pro <version>/Adobe Premiere Pro <version>.app/Contents/Support Files/Scripts/ScriptUI Panels/`
-2. Restart Premiere, open (or create) a project.
-3. Edit `CONFIG_PATH` at the top of `premiere/process_shorts.jsx` to point at this folder
-   (the one with `config.json`). If you leave it empty, Premiere will ask you to pick the
-   folder each run.
-4. Click **Window > Extensions > process_shorts**. Done: a new `Shorts …` sequence appears
-   with all your shorts placed back-to-back.
-
-## Optional: templates & auto-export
+## Settings
 
 Open `config.json`:
 
 | Setting | What it does |
 |---|---|
-| `sequence_preset` | Path to a saved sequence template (`.sqpreset`). Save one in Premiere: **File > New > Sequence… > Save Preset**, then point here. Leave empty to use a default 1080×1920 sequence. |
-| `export_preset` | Path to a saved export preset (`.epr`). Save one via **File > Export > Media > Preset > Save Preset**. When set, the Premiere script exports each timeline automatically. |
 | `speed_multiplier` | Default `100` (= 10,000%). |
 | `segment_seconds` | Length of each short. Default `10`. |
 | `clips_per_short` | Rows in the stack. Default `3`. |
+| `frame_width` / `frame_height` | Output resolution. Default `1080` × `1920`. |
 | `keep_audio` | Default `false` — at 100× audio is useless. Set `true` to keep the first clip's audio (also sped up). |
-
-Relative paths in config.json are resolved from this folder.
 
 ## Notes & limits
 
-- **Speed is baked in by ffmpeg** — Premiere's script API cannot set clip speed (it can only
-  read it), so the speedup happens before clips ever reach Premiere. This also means no
-  per-clip `Speed/Duration` work in the timeline.
-- The 3-row layout is done with ffmpeg's `xstack` filter; clips are center-cropped to fill
-  each slice, so a little of the left/right edge of wide recordings is cut off.
-- Premiere's ExtendScript system is supported through **September 2026** (Adobe is moving to
-  UXP); this pipeline works fine in current Premiere versions.
+- **Speed and layout are baked in by ffmpeg**, so the output is a plain video file —
+  no editing program involved at all.
+- The 3-row layout is done with ffmpeg's `xstack` filter; clips are center-cropped to
+  fill each slice, so a little of the left/right edge of wide recordings is cut off.
+- A file is only used once a recording/copy of it has finished (the script waits until
+  its size stops changing), so it's safe to drop clips while they're still being written.
+- If you ever want to assemble multiple shorts into one timeline with titles/music,
+  there's an optional `premiere/process_shorts.jsx` script in this repo — but you don't
+  need it for the basic flow.
