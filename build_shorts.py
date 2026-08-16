@@ -207,14 +207,14 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
                     f"crop={w}:{h},format=yuv420p[{out_label}]")
         return (f"[{in_label}:v]setpts=PTS/{speed},"
                 f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[{out_label}]")
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:0x000000,format=yuv420p[{out_label}]")
 
     filters = []
     if clips == 1:
         if rows is not None:
             w, h = rows[0][2], rows[0][3]
             filters.append(f"[0:v]setpts=PTS/{speed},scale={w}:{h},format=yuv420p[vx]")
-            filters.append(f"[vx]pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black[vout]")
+            filters.append(f"[vx]pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:0x000000[vout]")
         else:
             filters.append(clip_chain(0, "vout", width, height))
     elif rows is not None:
@@ -222,8 +222,8 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
             filters.append(clip_chain(i, f"v{i}", w, h))
         layout = "|".join(f"{x}_{y}" for (x, y, _, _) in rows)
         labels = "".join(f"[v{i}]" for i in range(clips))
-        filters.append(f"{labels}xstack=inputs={clips}:layout={layout}[vx]")
-        filters.append(f"[vx]pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black[vout]")
+        filters.append(f"{labels}xstack=inputs={clips}:layout={layout}:fill=0x000000[vx]")
+        filters.append(f"[vx]pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:0x000000[vout]")
     else:
         for i in range(clips):
             filters.append(clip_chain(i, f"v{i}", width, slice_h))
