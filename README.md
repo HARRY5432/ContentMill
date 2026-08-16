@@ -93,6 +93,8 @@ Open `config.json`:
   fill each slice, so a little of the left/right edge of wide recordings is cut off.
 - A file is only used once a recording/copy of it has finished (the script waits until
   its size stops changing), so it's safe to drop clips while they're still being written.
+- Files that can't be read (interrupted/corrupt recordings, e.g. a missing `moov` atom)
+  are detected up front, skipped with a warning, and the rest of the run continues.
 - If you ever want to assemble multiple shorts into one timeline with titles/music,
   there's an optional `premiere/process_shorts.jsx` script in this repo — but you don't
   need it for the basic flow.

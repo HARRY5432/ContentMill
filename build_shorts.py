@@ -172,16 +172,25 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
         cmd += ["-i", path]
 
     filters = []
-    for i in range(clips):
+    if clips == 1:
+        # single clip: no stacking needed (xstack requires >= 2 inputs)
         filters.append(
-            f"[{i}:v]setpts=PTS/{speed},"
-            f"scale={width}:{slice_h}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{slice_h},"
-            f"format=yuv420p[v{i}]"
+            f"[0:v]setpts=PTS/{speed},"
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"format=yuv420p[vout]"
         )
-    layout = "|".join(f"0_{row * slice_h}" for row in range(clips))
-    labels = "".join(f"[v{i}]" for i in range(clips))
-    filters.append(f"{labels}xstack=inputs={clips}:layout={layout}[vout]")
+    else:
+        for i in range(clips):
+            filters.append(
+                f"[{i}:v]setpts=PTS/{speed},"
+                f"scale={width}:{slice_h}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{slice_h},"
+                f"format=yuv420p[v{i}]"
+            )
+        layout = "|".join(f"0_{row * slice_h}" for row in range(clips))
+        labels = "".join(f"[v{i}]" for i in range(clips))
+        filters.append(f"{labels}xstack=inputs={clips}:layout={layout}[vout]")
 
     if keep_audio:
         chain = atempo_chain(speed)
@@ -225,6 +234,22 @@ def build_one_short(cfg, group, idx, output_dir, ffmpeg, dry_run, force,
     return {"short": out_name, "inputs": [os.path.basename(p) for p in group]}
 
 
+def probe_all(ffprobe, paths):
+    """Probe every path once. Returns (duration_by_path, bad_paths).
+
+    A path is 'bad' when ffprobe cannot read it at all (interrupted recording,
+    truncated/corrupt file). Those can never be used, so they're skipped.
+    """
+    durations, bad = {}, []
+    for p in paths:
+        d = probe_duration(ffprobe, p)
+        if d is None:
+            bad.append(p)
+        else:
+            durations[p] = d
+    return durations, bad
+
+
 def plan_windows(cfg, group, durations, ffprobe):
     """Return a list of (start_seconds, output_duration, clips_used) for a group.
 
@@ -260,7 +285,7 @@ def plan_windows(cfg, group, durations, ffprobe):
 
 
 def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
-                    dry_run, force, watch):
+                    dry_run, force, watch, warned=None):
     """Build shorts from every not-yet-used group of clips. Returns new manifest."""
     skip = set(cfg.get("skip_files", []))
     inputs = list_inputs(input_dir, strict=not watch, skip=skip)
@@ -273,6 +298,25 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
 
     if not pending:
         return manifest
+
+    if warned is None:
+        warned = set()
+
+    # drop files ffmpeg can't read (interrupted recordings, corrupt files)
+    if ffprobe:
+        durations_map, bad = probe_all(ffprobe, pending)
+        for p in bad:
+            if p not in warned:
+                print(f"SKIP {os.path.basename(p)}: cannot read this file - it looks like an "
+                      f"unfinished or corrupt recording. Re-record or delete it. "
+                      f"(If it was still being recorded, use --watch so in-progress "
+                      f"files are skipped automatically.)")
+                warned.add(p)
+        pending = [p for p in pending if p not in set(bad)]
+        if not pending:
+            return manifest
+    else:
+        durations_map = {p: None for p in pending}
 
     # group pending clips; a leftover partial group is either waited on
     # (watch mode) or used as a smaller stacked short (one-shot mode)
@@ -293,7 +337,7 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
     seg = float(cfg.get("segment_seconds", 10))
     speed = float(cfg.get("speed_multiplier", 100))
     for group in groups:
-        durations = [probe_duration(ffprobe, p) if ffprobe else None for p in group]
+        durations = [durations_map[p] for p in group]
         windows = plan_windows(cfg, group, durations, ffprobe)
         prev_count = len(group)
         for (start, dur, clips_now) in windows:
@@ -333,6 +377,7 @@ def watch_loop(cfg, input_dir, output_dir, ffmpeg, ffprobe, dry_run):
     print("Drop clips in any time. Press Ctrl+C to stop.\n")
     try:
         skip = set(cfg.get("skip_files", []))
+        warned = set()
         while True:
             inputs = list_inputs(input_dir, strict=False, skip=skip)
             if inputs:
@@ -342,7 +387,7 @@ def watch_loop(cfg, input_dir, output_dir, ffmpeg, ffprobe, dry_run):
                 if pending:
                     manifest = process_pending(cfg, input_dir, output_dir, manifest,
                                                ffmpeg, ffprobe, dry_run, force=False,
-                                               watch=True)
+                                               watch=True, warned=warned)
             time.sleep(WATCH_POLL_SECONDS)
     except KeyboardInterrupt:
         print(f"\nStopped. {len(manifest)} short(s) built so far in '{output_dir}'.")

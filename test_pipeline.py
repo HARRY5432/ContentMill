@@ -155,7 +155,7 @@ def test_cascade_uses_mismatched_lengths():
     assert manifest[2]["inputs"] == ["d01.mp4", "d03.mp4"], manifest[2]
     assert manifest[4]["inputs"] == ["d03.mp4"], manifest[4]
     cmd1 = " ".join(fake_run.CMDS[3])  # first full-frame short
-    assert "scale=1080:1920" in cmd1 and "xstack=inputs=1:layout=0_0" in cmd1, cmd1
+    assert "scale=1080:1920" in cmd1 and "xstack" not in cmd1, cmd1
     print("PASS cascade: mismatched clip lengths fully used (3-up -> 2-up -> full-frame)")
     shutil.rmtree(tmp)
 
@@ -170,6 +170,26 @@ def test_partial_group_becomes_2up():
     assert "scale=1080:960" in cmd, "2-up short should use half-height slices"
     assert "xstack=inputs=2:layout=0_0|0_960" in cmd, cmd
     print("PASS partial: 2 leftover files -> 2-up short, nothing wasted")
+    shutil.rmtree(tmp)
+
+
+def test_bad_file_is_skipped():
+    tmp = setup()
+    fake_run.CMDS = []
+    # g02 cannot be read (interrupted recording) -> skipped, others still used
+    durations = {"g01.mp4": 2000.0, "g02.mp4": None, "g03.mp4": 2000.0}
+    orig_probe = bs.probe_duration
+    bs.probe_duration = lambda ffprobe, path: durations[os.path.basename(path)]
+    try:
+        manifest, out = run_pending(tmp, ["g01.mp4", "g02.mp4", "g03.mp4"],
+                                    ffprobe=object())
+    finally:
+        bs.probe_duration = orig_probe
+    assert len(manifest) == 2, f"expected 2 shorts from the 2 good clips, got {len(manifest)}"
+    for entry in manifest:
+        assert "g02.mp4" not in entry["inputs"], entry
+    assert manifest[0]["inputs"] == ["g01.mp4", "g03.mp4"], manifest[0]
+    print("PASS bad file: unreadable clip skipped, good clips still fully used")
     shutil.rmtree(tmp)
 
 
@@ -207,5 +227,6 @@ if __name__ == "__main__":
     test_segments_use_full_footage()
     test_cascade_uses_mismatched_lengths()
     test_partial_group_becomes_2up()
+    test_bad_file_is_skipped()
     test_stability_check()
     print("\nAll tests passed.")
