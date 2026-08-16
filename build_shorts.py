@@ -171,23 +171,27 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
             cmd += ["-ss", str(segment_start)]
         cmd += ["-i", path]
 
+    # how each clip fits its slice:
+    #   contain (default) - whole clip visible, black bars where needed (nothing cut)
+    #   cover             - fills the slice completely, edges cropped
+    fit = cfg.get("fit", "contain")
+
+    def clip_chain(in_label, out_label, w, h):
+        if fit == "cover":
+            return (f"[{in_label}:v]setpts=PTS/{speed},"
+                    f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+                    f"crop={w}:{h},format=yuv420p[{out_label}]")
+        return (f"[{in_label}:v]setpts=PTS/{speed},"
+                f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[{out_label}]")
+
     filters = []
     if clips == 1:
         # single clip: no stacking needed (xstack requires >= 2 inputs)
-        filters.append(
-            f"[0:v]setpts=PTS/{speed},"
-            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},"
-            f"format=yuv420p[vout]"
-        )
+        filters.append(clip_chain(0, "vout", width, height))
     else:
         for i in range(clips):
-            filters.append(
-                f"[{i}:v]setpts=PTS/{speed},"
-                f"scale={width}:{slice_h}:force_original_aspect_ratio=increase,"
-                f"crop={width}:{slice_h},"
-                f"format=yuv420p[v{i}]"
-            )
+            filters.append(clip_chain(i, f"v{i}", width, slice_h))
         layout = "|".join(f"0_{row * slice_h}" for row in range(clips))
         labels = "".join(f"[v{i}]" for i in range(clips))
         filters.append(f"{labels}xstack=inputs={clips}:layout={layout}[vout]")
@@ -293,6 +297,8 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
         return manifest
 
     clips = int(cfg.get("clips_per_short", 3))
+    if force and not watch:
+        manifest = []  # full rebuild: discard old entries, restart at short_001
     consumed = set() if (force and not watch) else consumed_inputs(manifest)
     pending = [p for p in inputs if os.path.basename(p) not in consumed]
 

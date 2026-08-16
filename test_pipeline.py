@@ -52,7 +52,7 @@ def setup():
     return tmp
 
 
-def run_pending(tmp, names, ffprobe=None, watch=False, extra_cfg=None):
+def run_pending(tmp, names, ffprobe=None, watch=False, force=False, extra_cfg=None):
     """Process the given files in a fresh temp project; returns (manifest, out_dir)."""
     rec = os.path.join(tmp, "recordings")
     out = os.path.join(tmp, "composited")
@@ -68,7 +68,7 @@ def run_pending(tmp, names, ffprobe=None, watch=False, extra_cfg=None):
         with open(bs.CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f)
     manifest = bs.process_pending(bs.load_config(), rec, out, [], None, ffprobe,
-                                  dry_run=False, force=False, watch=watch)
+                                  dry_run=False, force=force, watch=watch)
     return manifest, out
 
 
@@ -193,6 +193,39 @@ def test_bad_file_is_skipped():
     shutil.rmtree(tmp)
 
 
+def test_force_rebuilds_from_001():
+    tmp = setup()
+    fake_run.CMDS = []
+    manifest, out = run_pending(tmp, ["f01.mp4", "f02.mp4", "f03.mp4"])
+    assert manifest[0]["short"] == "short_001.mp4"
+    # force re-run rebuilds and renumbers from short_001 (not 002/007)
+    manifest, out = run_pending(tmp, ["f01.mp4", "f02.mp4", "f03.mp4"], force=True)
+    assert len(manifest) == 1 and manifest[0]["short"] == "short_001.mp4", manifest
+    print("PASS force: rebuild restarts numbering at short_001")
+    shutil.rmtree(tmp)
+
+
+def test_fit_modes():
+    tmp = setup()
+    fake_run.CMDS = []
+    # contain (default): whole clip visible, no crop, black bars
+    manifest, out = run_pending(tmp, ["h01.mp4", "h02.mp4", "h03.mp4"],
+                                extra_cfg={"fit": "contain"})
+    cmd = " ".join(fake_run.CMDS[0])
+    assert "force_original_aspect_ratio=decrease" in cmd, cmd
+    assert "pad=1080:640" in cmd and "(ow-iw)/2:(oh-ih)/2" in cmd, cmd
+    assert "crop=" not in cmd, "contain mode must not crop the clip"
+    # cover: fills the slice, edges cropped
+    fake_run.CMDS = []
+    manifest, out = run_pending(tmp, ["i01.mp4", "i02.mp4", "i03.mp4"],
+                                extra_cfg={"fit": "cover"})
+    cmd = " ".join(fake_run.CMDS[0])
+    assert "force_original_aspect_ratio=increase" in cmd, cmd
+    assert "crop=1080:640" in cmd, cmd
+    print("PASS fit modes: contain shows whole clip, cover fills and crops")
+    shutil.rmtree(tmp)
+
+
 def test_stability_check():
     bs.file_is_stable = ORIG_STABILITY_CHECK  # undo the watch-test monkeypatch
     tmp = tempfile.mkdtemp(prefix="autoclip_stab_")
@@ -228,5 +261,7 @@ if __name__ == "__main__":
     test_cascade_uses_mismatched_lengths()
     test_partial_group_becomes_2up()
     test_bad_file_is_skipped()
+    test_fit_modes()
+    test_force_rebuilds_from_001()
     test_stability_check()
     print("\nAll tests passed.")
