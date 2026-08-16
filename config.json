@@ -12,7 +12,7 @@
   "keep_audio": false,
   "segments": "full",
   "allow_partial_groups": true,
-  "fit": "contain",
+  "fit": "tight",
   "skip_files": [
     "bandicam 2026-08-16 16-06-11-925.mp4"
   ],

@@ -116,13 +116,13 @@ def test_segments_use_full_footage():
     tmp = setup()
     fake_run.CMDS = []
     # 2500s (~42 min) clips -> 3 segments: 0-1000, 1000-2000, 2000-2500 (last = 5s)
-    orig_probe = bs.probe_duration
-    bs.probe_duration = lambda ffprobe, path: 2500.0
+    orig_probe = bs.probe_info
+    bs.probe_info = lambda ffprobe, path: (2500.0, None, None)
     try:
         manifest, out = run_pending(tmp, ["d01.mp4", "d02.mp4", "d03.mp4"],
                                     ffprobe=object())
     finally:
-        bs.probe_duration = orig_probe
+        bs.probe_info = orig_probe
     assert len(manifest) == 3, f"expected 3 segments, got {len(manifest)}"
     for entry in manifest:
         assert entry["inputs"] == ["d01.mp4", "d02.mp4", "d03.mp4"], entry
@@ -142,13 +142,13 @@ def test_cascade_uses_mismatched_lengths():
     #  0-1000 (3-up), 1000-1500 (3-up, 5s), 1500-2500 (2-up),
     #  2500-3500 (full-frame), 3500-4000 (full-frame, 5s)
     durations = {"d01.mp4": 2500.0, "d02.mp4": 1500.0, "d03.mp4": 4000.0}
-    orig_probe = bs.probe_duration
-    bs.probe_duration = lambda ffprobe, path: durations[os.path.basename(path)]
+    orig_probe = bs.probe_info
+    bs.probe_info = lambda ffprobe, path: (durations[os.path.basename(path)], None, None)
     try:
         manifest, out = run_pending(tmp, ["d01.mp4", "d02.mp4", "d03.mp4"],
                                     ffprobe=object())
     finally:
-        bs.probe_duration = orig_probe
+        bs.probe_info = orig_probe
     assert len(manifest) == 5, f"expected 5 shorts, got {len(manifest)}"
     counts = [len(e["inputs"]) for e in manifest]
     assert counts == [3, 3, 2, 1, 1], counts
@@ -178,18 +178,39 @@ def test_bad_file_is_skipped():
     fake_run.CMDS = []
     # g02 cannot be read (interrupted recording) -> skipped, others still used
     durations = {"g01.mp4": 2000.0, "g02.mp4": None, "g03.mp4": 2000.0}
-    orig_probe = bs.probe_duration
-    bs.probe_duration = lambda ffprobe, path: durations[os.path.basename(path)]
+    orig_probe = bs.probe_info
+    bs.probe_info = lambda ffprobe, path: (durations[os.path.basename(path)], None, None)
     try:
         manifest, out = run_pending(tmp, ["g01.mp4", "g02.mp4", "g03.mp4"],
                                     ffprobe=object())
     finally:
-        bs.probe_duration = orig_probe
+        bs.probe_info = orig_probe
     assert len(manifest) == 2, f"expected 2 shorts from the 2 good clips, got {len(manifest)}"
     for entry in manifest:
         assert "g02.mp4" not in entry["inputs"], entry
     assert manifest[0]["inputs"] == ["g01.mp4", "g03.mp4"], manifest[0]
     print("PASS bad file: unreadable clip skipped, good clips still fully used")
+    shutil.rmtree(tmp)
+
+
+def test_tight_layout_no_black_between_rows():
+    tmp = setup()
+    fake_run.CMDS = []
+    # 1360x768 (16:9 landscape) clips -> each scaled to 1080x610;
+    # block of 3 rows = 1830px tall, centered -> rows at y = 45, 655, 1265
+    orig_probe = bs.probe_info
+    bs.probe_info = lambda ffprobe, path: (2000.0, 1360, 768)
+    try:
+        manifest, out = run_pending(tmp, ["t01.mp4", "t02.mp4", "t03.mp4"],
+                                    ffprobe=object())
+    finally:
+        bs.probe_info = orig_probe
+    cmd = " ".join(fake_run.CMDS[0])
+    assert "scale=1080:610" in cmd, cmd
+    assert "layout=0_45|0_655|0_1265" in cmd, cmd
+    assert "pad=1080:1920" in cmd, "output canvas must be forced to 1080x1920"
+    assert "crop=" not in cmd, "tight mode must not crop the clip"
+    print("PASS tight: rows touch, no black gaps, middle row centered")
     shutil.rmtree(tmp)
 
 
@@ -262,6 +283,7 @@ if __name__ == "__main__":
     test_partial_group_becomes_2up()
     test_bad_file_is_skipped()
     test_fit_modes()
+    test_tight_layout_no_black_between_rows()
     test_force_rebuilds_from_001()
     test_stability_check()
     print("\nAll tests passed.")

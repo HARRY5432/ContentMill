@@ -8,7 +8,8 @@ For every group of N input recordings (N = clips_per_short, default 3) it:
   1. speeds each clip up by speed_multiplier (default 100x = 10000%),
   2. scales + center-crops each clip to fill one vertical slice of the frame
      (frame_height / clips_per_short tall),
-  3. stacks the slices top -> middle -> bottom into one 9:16 frame (xstack),
+  3. stacks the clips top -> middle -> bottom into one 9:16 frame (xstack),
+     rows touching so there are no black gaps between them,
   4. trims the result to segment_seconds (default 10s),
   5. writes composited/short_001.mp4, short_002.mp4, ... — each one is a
      finished, upload-ready short.
@@ -118,16 +119,29 @@ def consumed_inputs(manifest):
     return {name for entry in manifest for name in entry.get("inputs", [])}
 
 
-def probe_duration(ffprobe, path):
+def probe_info(ffprobe, path):
+    """Probe a file once. Returns (duration_seconds, width, height).
+
+    Returns (None, None, None) if the file can't be read at all.
+    """
     try:
         out = subprocess.run(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            [ffprobe, "-v", "error",
+             "-show_entries", "format=duration:stream=width,height,codec_type",
+             "-of", "json", path],
             capture_output=True, text=True, timeout=60,
         )
-        return float(out.stdout.strip())
+        data = json.loads(out.stdout)
+        dur = float(data["format"]["duration"])
+        w = h = None
+        for s in data.get("streams", []):
+            if s.get("codec_type") == "video":
+                w = s.get("width")
+                h = s.get("height")
+                break
+        return dur, w, h
     except Exception:
-        return None
+        return None, None, None
 
 
 def atempo_chain(multiplier):
@@ -143,7 +157,7 @@ def atempo_chain(multiplier):
 
 
 def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
-                         segment_start=0.0, segment_dur=None):
+                         segment_start=0.0, segment_dur=None, dims=None):
     """Build the ffmpeg command for one short.
 
     `inputs` is the group of source clips (2 or 3 for a stacked short).
@@ -171,12 +185,22 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
             cmd += ["-ss", str(segment_start)]
         cmd += ["-i", path]
 
-    # how each clip fits its slice:
-    #   contain (default) - whole clip visible, black bars where needed (nothing cut)
-    #   cover             - fills the slice completely, edges cropped
-    fit = cfg.get("fit", "contain")
+    # how each clip fits its row:
+    #   tight (default) - whole clip visible, rows touch (no black between rows)
+    #   contain         - whole clip visible, each row padded (bars between rows)
+    #   cover           - fills the slice completely, edges cropped
+    fit = cfg.get("fit", "tight")
+
+    # tight mode needs each source's dimensions; falls back to contain if unknown
+    rows = None
+    if fit == "tight" and dims and len(dims) == len(inputs) \
+            and all(d and d[0] and d[1] for d in dims):
+        rows = tight_layout(dims, width, height)
 
     def clip_chain(in_label, out_label, w, h):
+        if rows is not None:
+            return (f"[{in_label}:v]setpts=PTS/{speed},"
+                    f"scale={w}:{h},format=yuv420p[{out_label}]")
         if fit == "cover":
             return (f"[{in_label}:v]setpts=PTS/{speed},"
                     f"scale={w}:{h}:force_original_aspect_ratio=increase,"
@@ -187,8 +211,19 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
 
     filters = []
     if clips == 1:
-        # single clip: no stacking needed (xstack requires >= 2 inputs)
-        filters.append(clip_chain(0, "vout", width, height))
+        if rows is not None:
+            w, h = rows[0][2], rows[0][3]
+            filters.append(f"[0:v]setpts=PTS/{speed},scale={w}:{h},format=yuv420p[vx]")
+            filters.append(f"[vx]pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black[vout]")
+        else:
+            filters.append(clip_chain(0, "vout", width, height))
+    elif rows is not None:
+        for i, (x, y, w, h) in enumerate(rows):
+            filters.append(clip_chain(i, f"v{i}", w, h))
+        layout = "|".join(f"{x}_{y}" for (x, y, _, _) in rows)
+        labels = "".join(f"[v{i}]" for i in range(clips))
+        filters.append(f"{labels}xstack=inputs={clips}:layout={layout}[vx]")
+        filters.append(f"[vx]pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black[vout]")
     else:
         for i in range(clips):
             filters.append(clip_chain(i, f"v{i}", width, slice_h))
@@ -214,7 +249,7 @@ def build_ffmpeg_command(cfg, inputs, out_path, ffmpeg_bin="ffmpeg",
 
 
 def build_one_short(cfg, group, idx, output_dir, ffmpeg, dry_run, force,
-                    segment_start=0.0, segment_dur=None):
+                    segment_start=0.0, segment_dur=None, dims=None):
     """Build short_XXX.mp4 from one group of clips (one segment). Manifest entry."""
     out_name = f"short_{idx:03d}.mp4"
     out_path = os.path.join(output_dir, out_name)
@@ -224,7 +259,7 @@ def build_one_short(cfg, group, idx, output_dir, ffmpeg, dry_run, force,
         return {"short": out_name, "inputs": [os.path.basename(p) for p in group]}
 
     cmd = build_ffmpeg_command(cfg, group, out_path, ffmpeg or "ffmpeg",
-                               segment_start, segment_dur)
+                               segment_start, segment_dur, dims)
     if dry_run:
         print(" ".join(cmd))
         print()
@@ -239,19 +274,46 @@ def build_one_short(cfg, group, idx, output_dir, ffmpeg, dry_run, force,
 
 
 def probe_all(ffprobe, paths):
-    """Probe every path once. Returns (duration_by_path, bad_paths).
+    """Probe every path once. Returns (info_by_path, bad_paths).
 
     A path is 'bad' when ffprobe cannot read it at all (interrupted recording,
     truncated/corrupt file). Those can never be used, so they're skipped.
     """
-    durations, bad = {}, []
+    info, bad = {}, []
     for p in paths:
-        d = probe_duration(ffprobe, p)
-        if d is None:
+        dur, w, h = probe_info(ffprobe, p)
+        if dur is None:
             bad.append(p)
         else:
-            durations[p] = d
-    return durations, bad
+            info[p] = (dur, w, h)
+    return info, bad
+
+
+def tight_layout(dims, frame_w, frame_h):
+    """Compute (x, y, w, h) per clip so the rows touch with no black gaps.
+
+    Each clip is scaled to fill its row width (keeping aspect, nothing cut),
+    then the block of rows is centered vertically - so the middle row sits at
+    the frame's center. Returns None if any clip's size is unknown.
+    """
+    n = len(dims)
+    if n == 0 or any(d is None or d[0] is None or d[1] is None for d in dims):
+        return None
+    max_h = frame_h // n
+    sized = []
+    for (sw, sh) in dims:
+        scale = min(frame_w / sw, max_h / sh)
+        w = max(2, int(round(sw * scale / 2) * 2))
+        h = max(2, int(round(sh * scale / 2) * 2))
+        sized.append((w, h))
+    total_h = sum(h for (_, h) in sized)
+    y = (frame_h - total_h) // 2
+    rows = []
+    for (w, h) in sized:
+        x = (frame_w - w) // 2
+        rows.append((x, y, w, h))
+        y += h
+    return rows
 
 
 def plan_windows(cfg, group, durations, ffprobe):
@@ -310,7 +372,7 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
 
     # drop files ffmpeg can't read (interrupted recordings, corrupt files)
     if ffprobe:
-        durations_map, bad = probe_all(ffprobe, pending)
+        info_map, bad = probe_all(ffprobe, pending)
         for p in bad:
             if p not in warned:
                 print(f"SKIP {os.path.basename(p)}: cannot read this file - it looks like an "
@@ -322,7 +384,7 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
         if not pending:
             return manifest
     else:
-        durations_map = {p: None for p in pending}
+        info_map = {p: None for p in pending}
 
     # group pending clips; a leftover partial group is either waited on
     # (watch mode) or used as a smaller stacked short (one-shot mode)
@@ -343,7 +405,8 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
     seg = float(cfg.get("segment_seconds", 10))
     speed = float(cfg.get("speed_multiplier", 100))
     for group in groups:
-        durations = [durations_map[p] for p in group]
+        durations = [info_map[p][0] if info_map.get(p) else None for p in group]
+        dims_map = {p: (info_map[p][1], info_map[p][2]) for p in group if info_map.get(p)}
         windows = plan_windows(cfg, group, durations, ffprobe)
         prev_count = len(group)
         for (start, dur, clips_now) in windows:
@@ -354,8 +417,10 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
             if dur < seg:
                 print(f"NOTE: this stretch uses the final {dur * speed:.0f}s of footage "
                       f"-> short will be {dur:.1f}s.")
+            dims_now = [dims_map.get(p) for p in clips_now]
             entry = build_one_short(cfg, clips_now, next_idx, output_dir, ffmpeg,
-                                    dry_run, force, segment_start=start, segment_dur=dur)
+                                    dry_run, force, segment_start=start, segment_dur=dur,
+                                    dims=dims_now)
             manifest.append(entry)
             next_idx += 1
 

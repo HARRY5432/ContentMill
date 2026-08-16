@@ -83,7 +83,7 @@ Open `config.json`:
 | `skip_files` | List of exact filenames to never process (e.g. a duplicate recording). |
 | `input_dir` | Which folder holds your recordings. Default `recordings` — point it anywhere, e.g. `raw`. |
 | `segments` | `full` (default): keep making shorts from a group until its footage runs out. `one`: one short per group. |
-| `fit` | `contain` (default): whole clip is visible, small black bars where needed — nothing is cut off. `cover`: fills the slice, edges cropped. |
+| `fit` | `tight` (default): whole clip visible, rows touch — no black gaps between the stacked clips. `contain`: whole clip visible, small bars between rows. `cover`: fills the slice, edges cropped. |
 | `allow_partial_groups` | `true` (default): leftover files become a smaller stacked short. `false`: skip them. |
 
 ## Notes & limits
