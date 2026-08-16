@@ -24,6 +24,12 @@ from three recordings (e.g. three screens or three takes).
 The script remembers what it already processed (`composited/manifest.json`), so it
 only ever works on new clips. You can add files mid-run and it picks them up.
 
+**Nothing is wasted:**
+- A group of 3 recordings keeps producing shorts until its footage runs out — a
+  45-minute recording yields 3 shorts, not 1 — so the tail of every clip is used.
+- Leftover files that don't fill a group still become a short: 2 files → 2-up,
+  1 file → full-frame.
+
 ## 1. Install once
 
 1. **Install ffmpeg** (the only dependency — Python ships with most systems, or install it):
@@ -73,6 +79,8 @@ Open `config.json`:
 | `keep_audio` | Default `false` — at 100× audio is useless. Set `true` to keep the first clip's audio (also sped up). |
 | `skip_files` | List of exact filenames to never process (e.g. a duplicate recording). |
 | `input_dir` | Which folder holds your recordings. Default `recordings` — point it anywhere, e.g. `raw`. |
+| `segments` | `full` (default): keep making shorts from a group until its footage runs out. `one`: one short per group. |
+| `allow_partial_groups` | `true` (default): leftover files become a smaller stacked short. `false`: skip them. |
 
 ## Notes & limits
 

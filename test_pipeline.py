@@ -20,11 +20,15 @@ ORIG_STABILITY_CHECK = bs.file_is_stable
 
 
 def fake_run(cmd, capture_output=False, text=False):
-    """Pretend ffmpeg ran: create the output file (last arg), return success."""
+    """Pretend ffmpeg ran: create the output file (last arg), record the cmd."""
     out = cmd[-1]
     with open(out, "w") as f:
         f.write("fake")
+    fake_run.CMDS.append(cmd)
     return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+
+fake_run.CMDS = []
 
 
 def make_files(folder, names):
@@ -48,20 +52,30 @@ def setup():
     return tmp
 
 
-def test_one_shot_rounds_of_three():
-    tmp = setup()
+def run_pending(tmp, names, ffprobe=None, watch=False, extra_cfg=None):
+    """Process the given files in a fresh temp project; returns (manifest, out_dir)."""
     rec = os.path.join(tmp, "recordings")
     out = os.path.join(tmp, "composited")
     os.makedirs(out, exist_ok=True)
-    make_files(rec, ["a01.mp4", "a02.mp4", "a03.mp4", "a04.mp4", "a05.mp4", "a06.mp4"])
-
+    make_files(rec, names)
     bs.HERE = tmp
     bs.CONFIG_PATH = os.path.join(tmp, "config.json")
     bs.subprocess.run = fake_run
+    if extra_cfg:
+        with open(bs.CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg.update(extra_cfg)
+        with open(bs.CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, ffprobe,
+                                  dry_run=False, force=False, watch=watch)
+    return manifest, out
 
-    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, None,
-                                  dry_run=False, force=False, watch=False)
 
+def test_one_shot_rounds_of_three():
+    tmp = setup()
+    manifest, out = run_pending(tmp, ["a01.mp4", "a02.mp4", "a03.mp4",
+                                      "a04.mp4", "a05.mp4", "a06.mp4"])
     assert len(manifest) == 2, f"expected 2 shorts, got {len(manifest)}"
     assert manifest[0]["short"] == "short_001.mp4"
     assert manifest[0]["inputs"] == ["a01.mp4", "a02.mp4", "a03.mp4"], manifest[0]
@@ -74,23 +88,9 @@ def test_one_shot_rounds_of_three():
 
 def test_incremental_adds_only_new_files():
     tmp = setup()
-    rec = os.path.join(tmp, "recordings")
-    out = os.path.join(tmp, "composited")
-    os.makedirs(out, exist_ok=True)
-    make_files(rec, ["b01.mp4", "b02.mp4", "b03.mp4"])
-
-    bs.HERE = tmp
-    bs.CONFIG_PATH = os.path.join(tmp, "config.json")
-    bs.subprocess.run = fake_run
-
-    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, None,
-                                  dry_run=False, force=False, watch=False)
+    manifest, out = run_pending(tmp, ["b01.mp4", "b02.mp4", "b03.mp4"])
     assert len(manifest) == 1
-
-    # user adds 3 more clips and runs again
-    make_files(rec, ["b04.mp4", "b05.mp4", "b06.mp4"])
-    manifest = bs.process_pending(bs.load_config(), rec, out, manifest, None, None,
-                                  dry_run=False, force=False, watch=False)
+    manifest, out = run_pending(tmp, ["b04.mp4", "b05.mp4", "b06.mp4"])
     assert len(manifest) == 2, f"expected 2 shorts after re-run, got {len(manifest)}"
     assert manifest[1]["inputs"] == ["b04.mp4", "b05.mp4", "b06.mp4"]
     assert os.path.exists(os.path.join(out, "short_002.mp4"))
@@ -100,29 +100,51 @@ def test_incremental_adds_only_new_files():
 
 def test_watch_builds_group_and_waits_for_rest():
     tmp = setup()
-    rec = os.path.join(tmp, "recordings")
-    out = os.path.join(tmp, "composited")
-    os.makedirs(out, exist_ok=True)
-    make_files(rec, ["c01.mp4", "c02.mp4", "c03.mp4", "c04.mp4"])
-
-    bs.HERE = tmp
-    bs.CONFIG_PATH = os.path.join(tmp, "config.json")
-    bs.subprocess.run = fake_run
-    bs.file_is_stable = lambda p: True  # files are already fully written
-
-    manifest = bs.process_pending(bs.load_config(), rec, out, [], None, None,
-                                  dry_run=False, force=False, watch=True)
+    manifest, out = run_pending(tmp, ["c01.mp4", "c02.mp4", "c03.mp4", "c04.mp4"],
+                                watch=True)
     # 4 new files: first 3 become a short, the 4th waits
     assert len(manifest) == 1, f"expected 1 short from 4 files, got {len(manifest)}"
     assert manifest[0]["inputs"] == ["c01.mp4", "c02.mp4", "c03.mp4"]
-
-    # two more arrive -> now the leftover + 2 = a full group
-    make_files(rec, ["c05.mp4", "c06.mp4"])
-    manifest = bs.process_pending(bs.load_config(), rec, out, manifest, None, None,
-                                  dry_run=False, force=False, watch=True)
+    manifest, out = run_pending(tmp, ["c05.mp4", "c06.mp4"], watch=True)
     assert len(manifest) == 2, f"expected 2 shorts, got {len(manifest)}"
     assert manifest[1]["inputs"] == ["c04.mp4", "c05.mp4", "c06.mp4"]
     print("PASS watch: builds full groups, waits for partial groups")
+    shutil.rmtree(tmp)
+
+
+def test_segments_use_full_footage():
+    tmp = setup()
+    fake_run.CMDS = []
+    # 2500s (~42 min) clips -> 3 segments: 0-1000, 1000-2000, 2000-2500 (last = 5s)
+    orig_probe = bs.probe_duration
+    bs.probe_duration = lambda ffprobe, path: 2500.0
+    try:
+        manifest, out = run_pending(tmp, ["d01.mp4", "d02.mp4", "d03.mp4"],
+                                    ffprobe=object())
+    finally:
+        bs.probe_duration = orig_probe
+    assert len(manifest) == 3, f"expected 3 segments, got {len(manifest)}"
+    for entry in manifest:
+        assert entry["inputs"] == ["d01.mp4", "d02.mp4", "d03.mp4"], entry
+    cmds = fake_run.CMDS
+    assert "-ss" not in cmds[0], "first segment should start at 0"
+    assert "-ss" in cmds[1] and "1000.0" in cmds[1], "second segment should seek to 1000s"
+    assert "-ss" in cmds[2] and "2000.0" in cmds[2], "third segment should seek to 2000s"
+    assert "-t" in cmds[2] and "5.0" in cmds[2], "last segment should use the 5s tail"
+    print("PASS segments: one group -> 3 shorts covering all footage (incl. tail)")
+    shutil.rmtree(tmp)
+
+
+def test_partial_group_becomes_2up():
+    tmp = setup()
+    fake_run.CMDS = []
+    manifest, out = run_pending(tmp, ["e01.mp4", "e02.mp4"])
+    assert len(manifest) == 1, f"expected 1 short from 2 files, got {len(manifest)}"
+    assert manifest[0]["inputs"] == ["e01.mp4", "e02.mp4"]
+    cmd = " ".join(fake_run.CMDS[0])
+    assert "scale=1080:960" in cmd, "2-up short should use half-height slices"
+    assert "xstack=inputs=2:layout=0_0|0_960" in cmd, cmd
+    print("PASS partial: 2 leftover files -> 2-up short, nothing wasted")
     shutil.rmtree(tmp)
 
 
@@ -157,5 +179,7 @@ if __name__ == "__main__":
     test_one_shot_rounds_of_three()
     test_incremental_adds_only_new_files()
     test_watch_builds_group_and_waits_for_rest()
+    test_segments_use_full_footage()
+    test_partial_group_becomes_2up()
     test_stability_check()
     print("\nAll tests passed.")
