@@ -135,6 +135,31 @@ def test_segments_use_full_footage():
     shutil.rmtree(tmp)
 
 
+def test_cascade_uses_mismatched_lengths():
+    tmp = setup()
+    fake_run.CMDS = []
+    # d01 = 2500s, d02 = 1500s, d03 = 4000s -> windows:
+    #  0-1000 (3-up), 1000-1500 (3-up, 5s), 1500-2500 (2-up),
+    #  2500-3500 (full-frame), 3500-4000 (full-frame, 5s)
+    durations = {"d01.mp4": 2500.0, "d02.mp4": 1500.0, "d03.mp4": 4000.0}
+    orig_probe = bs.probe_duration
+    bs.probe_duration = lambda ffprobe, path: durations[os.path.basename(path)]
+    try:
+        manifest, out = run_pending(tmp, ["d01.mp4", "d02.mp4", "d03.mp4"],
+                                    ffprobe=object())
+    finally:
+        bs.probe_duration = orig_probe
+    assert len(manifest) == 5, f"expected 5 shorts, got {len(manifest)}"
+    counts = [len(e["inputs"]) for e in manifest]
+    assert counts == [3, 3, 2, 1, 1], counts
+    assert manifest[2]["inputs"] == ["d01.mp4", "d03.mp4"], manifest[2]
+    assert manifest[4]["inputs"] == ["d03.mp4"], manifest[4]
+    cmd1 = " ".join(fake_run.CMDS[3])  # first full-frame short
+    assert "scale=1080:1920" in cmd1 and "xstack=inputs=1:layout=0_0" in cmd1, cmd1
+    print("PASS cascade: mismatched clip lengths fully used (3-up -> 2-up -> full-frame)")
+    shutil.rmtree(tmp)
+
+
 def test_partial_group_becomes_2up():
     tmp = setup()
     fake_run.CMDS = []
@@ -180,6 +205,7 @@ if __name__ == "__main__":
     test_incremental_adds_only_new_files()
     test_watch_builds_group_and_waits_for_rest()
     test_segments_use_full_footage()
+    test_cascade_uses_mismatched_lengths()
     test_partial_group_becomes_2up()
     test_stability_check()
     print("\nAll tests passed.")

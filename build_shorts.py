@@ -15,7 +15,9 @@ For every group of N input recordings (N = clips_per_short, default 3) it:
 
 Nothing is wasted:
   - Every group keeps producing consecutive shorts until its footage runs out
-    (segments = "full", the default), so long recordings are fully used.
+    (segments = "full", the default). When a clip runs out it drops out of the
+    stack and shorts continue with the remaining clips (3-up -> 2-up ->
+    full-frame), so even clips of very different lengths are fully used.
   - Leftover files that don't form a full group become a smaller stacked short
     (2 files -> 2-up, 1 file -> full-frame) instead of being skipped.
 
@@ -223,30 +225,38 @@ def build_one_short(cfg, group, idx, output_dir, ffmpeg, dry_run, force,
     return {"short": out_name, "inputs": [os.path.basename(p) for p in group]}
 
 
-def plan_segments(cfg, group, durations, ffprobe):
-    """Return a list of (segment_start, segment_dur) windows for a group.
+def plan_windows(cfg, group, durations, ffprobe):
+    """Return a list of (start_seconds, output_duration, clips_used) for a group.
 
-    With segments="full" (default) and known durations, one group yields as
-    many consecutive shorts as its shortest clip can fill, and the final one
-    uses the leftover tail so nothing is wasted.
+    With segments="full" (default) and known durations, the group's footage is
+    consumed window by window: each window becomes one short, and when a clip
+    runs out it drops out of the stack so shorts continue with the remaining
+    clips. The result uses every second of every clip, even when the clips have
+    very different lengths.
     """
     seg = float(cfg.get("segment_seconds", 10))
     speed = float(cfg.get("speed_multiplier", 100))
     needed = seg * speed
 
     known = ffprobe is not None and all(d is not None for d in durations)
-    if cfg.get("segments", "full") == "full" and known:
-        min_dur = min(durations)
-        n_seg = max(1, int(math.ceil(min_dur / needed)))
-        windows = []
-        for s in range(n_seg):
-            start = s * needed
-            remaining = min_dur - start
-            if remaining <= 0.5:
-                break
-            windows.append((start, min(seg, remaining / speed)))
-        return windows, min_dur, needed
-    return [(0.0, seg)], None, needed
+    if cfg.get("segments", "full") != "full" or not known:
+        return [(0.0, seg, list(group))]
+
+    alive = [(p, d) for p, d in zip(group, durations)]
+    windows = []
+    t = 0.0
+    while alive:
+        remaining = [d - t for (_, d) in alive]
+        min_rem = min(remaining)
+        if min_rem <= 0.5:
+            break
+        window = min(needed, min_rem)
+        windows.append((t, window / speed, [p for (p, _) in alive]))
+        t += window
+        alive = [(p, d) for (p, d) in alive if d - t > 0.5]
+    if not windows:  # safety: tiny/unknown edge case, still make one short
+        windows = [(0.0, seg, list(group))]
+    return windows
 
 
 def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
@@ -280,20 +290,21 @@ def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
             print(f"NOTE: the last {len(leftover)} file(s) don't form a full group of {clips}; skipping them.")
 
     next_idx = len(manifest) + 1
+    seg = float(cfg.get("segment_seconds", 10))
+    speed = float(cfg.get("speed_multiplier", 100))
     for group in groups:
         durations = [probe_duration(ffprobe, p) if ffprobe else None for p in group]
-        windows, min_dur, needed = plan_segments(cfg, group, durations, ffprobe)
-
-        if min_dur is not None and min_dur < needed:
-            print(f"NOTE: the shortest clip in this group is only {min_dur:.0f}s "
-                  f"({needed:.0f}s needed for a {cfg.get('segment_seconds', 10)}s short "
-                  f"at {cfg.get('speed_multiplier', 100):.0g}x) - its short will be shorter.")
-
-        for (start, dur) in windows:
-            if dur < float(cfg.get("segment_seconds", 10)):
-                print(f"NOTE: final segment uses the last {start + dur * float(cfg.get('speed_multiplier', 100)) - start:.0f}s "
-                      f"of footage -> short will be {dur:.1f}s.")
-            entry = build_one_short(cfg, group, next_idx, output_dir, ffmpeg,
+        windows = plan_windows(cfg, group, durations, ffprobe)
+        prev_count = len(group)
+        for (start, dur, clips_now) in windows:
+            if len(clips_now) < prev_count:
+                print(f"NOTE: a clip ran out after {start:.0f}s of footage - continuing "
+                      f"with {len(clips_now)} clip(s) so nothing is wasted.")
+                prev_count = len(clips_now)
+            if dur < seg:
+                print(f"NOTE: this stretch uses the final {dur * speed:.0f}s of footage "
+                      f"-> short will be {dur:.1f}s.")
+            entry = build_one_short(cfg, clips_now, next_idx, output_dir, ffmpeg,
                                     dry_run, force, segment_start=start, segment_dur=dur)
             manifest.append(entry)
             next_idx += 1

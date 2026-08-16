@@ -27,6 +27,9 @@ only ever works on new clips. You can add files mid-run and it picks them up.
 **Nothing is wasted:**
 - A group of 3 recordings keeps producing shorts until its footage runs out — a
   45-minute recording yields 3 shorts, not 1 — so the tail of every clip is used.
+- When a clip runs out, it drops out of the stack and shorts continue with the
+  remaining clips (3-up → 2-up → full-frame), so even clips of very different
+  lengths are fully used.
 - Leftover files that don't fill a group still become a short: 2 files → 2-up,
   1 file → full-frame.
 
