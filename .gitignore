@@ -1,0 +1,4 @@
+__pycache__/
+composited/
+recordings/*
+!recordings/.gitkeep

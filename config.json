@@ -1,0 +1,15 @@
+{
+  "input_dir": "recordings",
+  "output_dir": "composited",
+  "clips_per_short": 3,
+  "segment_seconds": 10,
+  "speed_multiplier": 100,
+  "frame_width": 1080,
+  "frame_height": 1920,
+  "fps": 30,
+  "preset": "medium",
+  "crf": 18,
+  "keep_audio": false,
+  "sequence_preset": "",
+  "export_preset": ""
+}
