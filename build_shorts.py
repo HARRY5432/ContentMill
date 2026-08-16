@@ -65,7 +65,9 @@ def natural_key(name):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
-def list_inputs(input_dir, strict=True):
+def list_inputs(input_dir, strict=True, skip=None):
+    """List usable recordings. `skip` is a set of exact filenames to ignore."""
+    skip = skip or set()
     if not os.path.isdir(input_dir):
         if strict:
             die(
@@ -76,7 +78,7 @@ def list_inputs(input_dir, strict=True):
     files = [
         os.path.join(input_dir, n)
         for n in os.listdir(input_dir)
-        if os.path.splitext(n)[1].lower() in VIDEO_EXTENSIONS
+        if os.path.splitext(n)[1].lower() in VIDEO_EXTENSIONS and n not in skip
     ]
     if not files and strict:
         die(f"no video files found in '{input_dir}' (supported: {sorted(VIDEO_EXTENSIONS)})")
@@ -212,7 +214,8 @@ def build_one_short(cfg, group, idx, output_dir, ffmpeg, ffprobe, dry_run, force
 def process_pending(cfg, input_dir, output_dir, manifest, ffmpeg, ffprobe,
                     dry_run, force, watch):
     """Build shorts from every not-yet-used group of clips. Returns new manifest."""
-    inputs = list_inputs(input_dir, strict=not watch)
+    skip = set(cfg.get("skip_files", []))
+    inputs = list_inputs(input_dir, strict=not watch, skip=skip)
     if not inputs:
         return manifest
 
@@ -267,8 +270,9 @@ def watch_loop(cfg, input_dir, output_dir, ffmpeg, ffprobe, dry_run):
           f"become one short in '{output_dir}'")
     print("Drop clips in any time. Press Ctrl+C to stop.\n")
     try:
+        skip = set(cfg.get("skip_files", []))
         while True:
-            inputs = list_inputs(input_dir, strict=False)
+            inputs = list_inputs(input_dir, strict=False, skip=skip)
             if inputs:
                 pending = [p for p in inputs
                            if os.path.basename(p) not in consumed_inputs(manifest)

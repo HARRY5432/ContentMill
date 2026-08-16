@@ -71,6 +71,8 @@ Open `config.json`:
 | `clips_per_short` | Rows in the stack. Default `3`. |
 | `frame_width` / `frame_height` | Output resolution. Default `1080` × `1920`. |
 | `keep_audio` | Default `false` — at 100× audio is useless. Set `true` to keep the first clip's audio (also sped up). |
+| `skip_files` | List of exact filenames to never process (e.g. a duplicate recording). |
+| `input_dir` | Which folder holds your recordings. Default `recordings` — point it anywhere, e.g. `raw`. |
 
 ## Notes & limits
 

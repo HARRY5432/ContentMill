@@ -1,5 +1,5 @@
 {
-  "input_dir": "recordings",
+  "input_dir": "raw",
   "output_dir": "composited",
   "clips_per_short": 3,
   "segment_seconds": 10,
@@ -10,6 +10,9 @@
   "preset": "medium",
   "crf": 18,
   "keep_audio": false,
+  "skip_files": [
+    "bandicam 2026-08-16 16-06-11-925.mp4"
+  ],
   "sequence_preset": "",
   "export_preset": ""
 }
