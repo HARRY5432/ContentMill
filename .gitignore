@@ -3,3 +3,15 @@ composited/
 raw/
 recordings/*
 !recordings/.gitkeep
+shorts/
+useless/
+tools/
+*.json
+!.gitignore
+!config.example.json
+.env
+client_secrets.json
+token.json
+config.json
+
+</content>

@@ -1,0 +1,26 @@
+{
+  "raw_dir": "raw",
+  "output_dir": "shorts",
+  "short_seconds": 40,
+  "daily_shorts": 5,
+  "start_date": "2026-08-27",
+  "frame_width": 1080,
+  "frame_height": 1920,
+  "fit": "cover",
+  "fps": 30,
+  "preset": "veryfast",
+  "crf": 20,
+  "keep_audio": true,
+  "max_workers": 2,
+  "skip_files": [],
+  "channels": [
+    "https://www.youtube.com/@ChannelOne/",
+    "https://www.youtube.com/@ChannelTwo/"
+  ],
+  "openrouter_api_key": "YOUR_KEY_HERE",
+  "openrouter_model": "openrouter/fusion",
+  "telegram_bot_token": "YOUR_BOT_TOKEN",
+  "telegram_chat_id": "YOUR_CHAT_ID"
+}
+
+</content>
