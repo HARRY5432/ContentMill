@@ -1,21 +1,25 @@
-{
-  "input_dir": "raw",
-  "output_dir": "composited",
-  "clips_per_short": 3,
-  "segment_seconds": 10,
-  "speed_multiplier": 100,
+﻿{
+  "raw_dir": "raw",
+  "output_dir": "shorts",
+  "short_seconds": 40,
+  "daily_shorts": 5,
+  "start_date": "2026-08-27",
   "frame_width": 1080,
   "frame_height": 1920,
+  "fit": "cover",
   "fps": 30,
-  "preset": "medium",
-  "crf": 18,
-  "keep_audio": false,
-  "segments": "full",
-  "allow_partial_groups": true,
-  "fit": "tight",
-  "skip_files": [
-    "bandicam 2026-08-16 16-06-11-925.mp4"
+  "preset": "veryfast",
+  "crf": 20,
+  "keep_audio": true,
+  "max_workers": 2,
+  "skip_files": [],
+  "channels": [
+    "https://www.youtube.com/@ViralMonkey/",
+    "https://www.youtube.com/@RoyalSatisfying/"
   ],
-  "sequence_preset": "",
-  "export_preset": ""
+  "openrouter_api_key": "REDACTED_API_KEY",
+  "openrouter_model": "openrouter/fusion",
+  "telegram_bot_token": "8607455865:AAEFcHlujJkZSmx_CjwxUsb4xHe7E6G95hQ",
+  "telegram_chat_id": "8076385395"
 }
+
