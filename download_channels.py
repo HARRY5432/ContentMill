@@ -41,8 +41,11 @@ def download_channel(url, out_dir, videos_per_channel=5):
         "--socket-timeout", "30",
         "--retries", "3",
         "--extractor-retries", "3",
-        url,
     ]
+    cookies = HERE / "cookies.txt"
+    if cookies.exists():
+        cmd += ["--cookies", str(cookies)]
+    cmd.append(url)
     print(f"Downloading up to {videos_per_channel} recent videos from {url}")
     print(f"  -> {out_dir}")
     result = subprocess.run(cmd)
