@@ -1,18 +1,23 @@
 ﻿import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 CONFIG = Path(__file__).with_name("config.json")
-YT_DLP = r"C:\Users\admin\AppData\Local\Python\pythoncore-3.14-64\Scripts\yt-dlp.exe"
+
+def _yt_dlp_cmd():
+    exe = shutil.which("yt-dlp")
+    if exe:
+        return [exe]
+    return [sys.executable, "-m", "yt_dlp"]
 
 def load_config():
     with open(CONFIG, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 def download_channel(url, out_dir):
-    cmd = [
-        YT_DLP,
+    cmd = _yt_dlp_cmd() + [
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "-o", str(out_dir / "%(title)s_%(id)s.%(ext)s"),
