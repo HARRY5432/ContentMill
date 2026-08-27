@@ -43,5 +43,3 @@ systemctl start contentfarming.service   # Manual test run
 
 ## Schedule
 Runs daily at 6:00 AM UTC. Edit `/etc/systemd/system/contentfarming.timer` to change time.
-
-</content>

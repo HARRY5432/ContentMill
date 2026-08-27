@@ -33,5 +33,3 @@ echo "2. Place client_secrets.json and token.json in /opt/contentfarming/"
 echo "3. Check status: systemctl status contentfarming.timer"
 echo "4. View logs: journalctl -u contentfarming.service -f"
 echo "5. Manual run: systemctl start contentfarming.service"
-
-</content>

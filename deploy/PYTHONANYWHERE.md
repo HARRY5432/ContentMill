@@ -42,5 +42,3 @@ Upload `client_secrets.json` and `token.json` to project folder via **Files** ta
 - Free tier: 1 scheduled task, limited CPU time per day
 - Check task logs in **Tasks** tab after each run
 - ffmpeg is pre-installed on PythonAnywhere
-
-</content>
