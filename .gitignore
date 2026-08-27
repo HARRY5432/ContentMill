@@ -13,3 +13,4 @@ tools/
 client_secrets.json
 token.json
 config.json
+cookies.txt

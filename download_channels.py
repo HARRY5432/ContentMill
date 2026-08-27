@@ -41,6 +41,8 @@ def download_channel(url, out_dir, videos_per_channel=5):
         "--socket-timeout", "30",
         "--retries", "3",
         "--extractor-retries", "3",
+        "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
     ]
     cookies = HERE / "cookies.txt"
     if cookies.exists():
