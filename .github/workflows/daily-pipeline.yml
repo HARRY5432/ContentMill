@@ -31,10 +31,9 @@ jobs:
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
 
       - name: Write cookies.txt for YouTube
-        if: secrets.YT_COOKIES != ''
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
-          echo "✓ Created cookies.txt"
+          echo "Created cookies.txt"
 
       - name: Restore auth files
         run: |
