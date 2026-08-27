@@ -1,0 +1,48 @@
+﻿name: Daily Pipeline
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Create .env from secrets
+        run: |
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" > .env
+          echo "OPENROUTER_MODEL=${{ vars.OPENROUTER_MODEL || 'openrouter/fusion' }}" >> .env
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+
+      - name: Restore auth files
+        run: |
+          echo "${{ secrets.CLIENT_SECRETS_JSON }}" | base64 -d > client_secrets.json
+          echo "${{ secrets.TOKEN_JSON }}" | base64 -d > token.json
+
+      - name: Run pipeline
+        run: python pipeline.py --force
+
+      - name: Upload shorts artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-${{ github.run_id }}
+          path: shorts/
+          retention-days: 7
+
