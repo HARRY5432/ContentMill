@@ -1,0 +1,14 @@
+[Unit]
+Description=ContentFarming Daily Pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/contentfarming
+ExecStart=/opt/contentfarming/venv/bin/python /opt/contentfarming/pipeline.py
+EnvironmentFile=/opt/contentfarming/.env
+StandardOutput=journal
+StandardError=journal
+
+</content>
