@@ -32,8 +32,8 @@ jobs:
 
       - name: Restore auth files
         run: |
-          echo "${{ secrets.CLIENT_SECRETS_JSON }}" | base64 -d > client_secrets.json
-          echo "${{ secrets.TOKEN_JSON }}" | base64 -d > token.json
+          printf '%s' "${{ secrets.CLIENT_SECRETS_JSON }}" > client_secrets.json
+          printf '%s' "${{ secrets.TOKEN_JSON }}" > token.json
 
       - name: Run pipeline
         run: python pipeline.py --force
