@@ -28,10 +28,10 @@ def cleanup_partials(raw_dir):
         f.unlink(missing_ok=True)
 
 
-def download_channel(url, out_dir, videos_per_channel=5):
+def download_one_video(channel_url, out_dir):
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = _yt_dlp_cmd() + [
-        "--playlist-items", f"1:{videos_per_channel}",
+        "--playlist-items", "1",
         "-f", "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "-o", str(out_dir / "%(title).80s_%(id)s.%(ext)s"),
@@ -47,14 +47,14 @@ def download_channel(url, out_dir, videos_per_channel=5):
     cookies = HERE / "cookies.txt"
     if cookies.exists():
         cmd += ["--cookies", str(cookies)]
-    cmd.append(url)
-    print(f"Downloading up to {videos_per_channel} recent videos from {url}")
+    cmd.append(channel_url)
+    print(f"Downloading 1 video from {channel_url}")
     print(f"  -> {out_dir}")
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        print(f"WARNING: yt-dlp exited with code {result.returncode} for {url}")
+        print(f"WARNING: yt-dlp exited with code {result.returncode}")
     else:
-        print(f"  Done: {url}")
+        print(f"  Done!")
 
 
 def main():
@@ -69,14 +69,15 @@ def main():
         print("No channels configured in config.json")
         sys.exit(1)
 
-    daily = int(cfg.get("daily_shorts", 5))
-    needed_videos = max(3, (daily + 2) // 3)
+    existing = list(raw_dir.glob("*.mp4"))
+    if existing:
+        print(f"Already have {len(existing)} video(s) in raw/. Skipping download.")
+        return
 
-    for ch in channels:
-        download_channel(ch, raw_dir, videos_per_channel=needed_videos)
+    download_one_video(channels[0], raw_dir)
 
-    downloaded = list(raw_dir.glob("*.mp4")) + list(raw_dir.glob("*.mkv"))
-    print(f"\nTotal raw files available: {len(downloaded)}")
+    downloaded = list(raw_dir.glob("*.mp4"))
+    print(f"\nTotal raw files: {len(downloaded)}")
 
 
 if __name__ == "__main__":
