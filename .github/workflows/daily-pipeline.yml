@@ -1,4 +1,4 @@
-﻿name: Daily Pipeline
+name: Daily Pipeline
 
 on:
   schedule:
@@ -32,8 +32,27 @@ jobs:
 
       - name: Restore auth files
         run: |
-          printf '%s' "${{ secrets.CLIENT_SECRETS_JSON }}" > client_secrets.json
-          printf '%s' "${{ secrets.TOKEN_JSON }}" > token.json
+          # Write CLIENT_SECRETS_JSON directly without any decoding
+          if [ -n "${{ secrets.CLIENT_SECRETS_JSON }}" ]; then
+            cat > client_secrets.json << 'EOF'
+          ${{ secrets.CLIENT_SECRETS_JSON }}
+          EOF
+            echo "✓ Created client_secrets.json"
+          else
+            echo '{}' > client_secrets.json
+            echo "⚠ CLIENT_SECRETS_JSON is empty, created placeholder"
+          fi
+          
+          # Write TOKEN_JSON directly without any decoding
+          if [ -n "${{ secrets.TOKEN_JSON }}" ]; then
+            cat > token.json << 'EOF'
+          ${{ secrets.TOKEN_JSON }}
+          EOF
+            echo "✓ Created token.json"
+          else
+            echo '{}' > token.json
+            echo "⚠ TOKEN_JSON is empty, created placeholder"
+          fi
 
       - name: Run pipeline
         run: python pipeline.py --force
@@ -45,4 +64,3 @@ jobs:
           name: shorts-${{ github.run_id }}
           path: shorts/
           retention-days: 7
-
