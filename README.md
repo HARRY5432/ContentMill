@@ -1,4 +1,4 @@
-# Contentfarming — sequential 45s shorts
+# Contentfarming — automated YouTube Shorts pipeline
 
 Cuts raw footage into upload-ready shorts. No intermediate files, no stacking.
 
@@ -31,6 +31,29 @@ python build_shorts.py --force     # rebuild everything from scratch
 ```
 
 Requires ffmpeg + ffprobe on PATH (`winget install ffmpeg`).
+
+## Telegram notifications
+
+The pipeline can send completion and error reports through a Telegram bot.
+Create a bot with BotFather, send it one message from your Telegram account,
+then determine the target chat ID. Store the values locally in `config.json`
+or, preferably, provide them through environment variables:
+
+```text
+TELEGRAM_BOT_TOKEN=replace_with_bot_token
+TELEGRAM_CHAT_ID=replace_with_chat_id
+```
+
+Never commit these values. They are ignored by Git and GitHub Actions reads
+them from repository secrets with the same names. Test locally with:
+
+```bash
+python telegram_notify.py "Contentfarming Telegram test"
+```
+
+The command exits safely when Telegram is not configured. Pipeline errors are
+reported without exposing credentials, and dynamic message content is escaped
+for Telegram HTML mode.
 
 ## Settings (`config.json`)
 
