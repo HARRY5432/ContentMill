@@ -141,8 +141,11 @@ def main():
             after_download = len(list(shorts_dir.glob("s*.mp4")))
             downloaded = max(0, after_download - available_before)
 
-            run_step("STEP 2: Build shorts (40s clips)",
-                     [sys.executable, str(HERE / "build_shorts.py")] + (["--force"] if force else []))
+            build_args = [sys.executable, str(HERE / "build_shorts.py")]
+            if force:
+                build_args.append("--force")
+            build_args += ["--max-shorts", str(max(1, needed_total - available_before))]
+            run_step("STEP 2: Build shorts (40s clips)", build_args)
             after_build = len(list(shorts_dir.glob("s*.mp4")))
             built = max(0, after_build - after_download)
 

@@ -185,9 +185,11 @@ def build_cut_command(cfg, src, start, dur, out_path, ffmpeg_bin):
     else:
         cmd += ["-an"]
     cmd += [
-        "-c:v", "libx264",
+        "-c:v", str(cfg.get("video_codec", "libx264")),
         "-preset", str(cfg.get("preset", "veryfast")),
         "-crf", str(cfg.get("crf", 20)),
+        "-threads", str(max(1, int(cfg.get("ffmpeg_threads", 2)))),
+        "-filter_threads", str(max(1, int(cfg.get("filter_threads", 1)))),
         "-movflags", "+faststart",
         out_path,
     ]
@@ -195,7 +197,7 @@ def build_cut_command(cfg, src, start, dur, out_path, ffmpeg_bin):
 
 
 def process_pending(cfg, raw_dir, output_dir, ffmpeg, ffprobe,
-                    dry_run, force, watch, warned=None):
+                    dry_run, force, watch, warned=None, max_shorts=None):
     os.makedirs(raw_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
     if warned is None:
@@ -245,15 +247,19 @@ def process_pending(cfg, raw_dir, output_dir, ffmpeg, ffprobe,
             entries.append({"short": out_name, "source": name,
                             "start": round(t, 3), "duration": round(w, 3)})
             t += w
+            if max_shorts and len(jobs) >= max_shorts:
+                break
         planned[name] = entries
         note = "" if dur % short_seconds == 0 else \
             f" (last one {dur - (len(entries) - 1) * short_seconds:.1f}s)"
         print(f"plan  {name}: {len(entries)} short(s){note}")
+        if max_shorts and len(jobs) >= max_shorts:
+            break
 
     total = len(jobs)
     done = [0]
     lock = threading.Lock()
-    workers = max(1, int(cfg.get("max_workers", min(4, os.cpu_count() or 4))))
+    workers = max(1, int(cfg.get("max_workers", 1)))
 
     def run_cut(job):
         src, start, w, out_path = job
@@ -314,6 +320,12 @@ def main():
     dry_run = "--dry-run" in args
     force = "--force" in args
     watch = "--watch" in args
+    max_shorts = None
+    if "--max-shorts" in args:
+        try:
+            max_shorts = max(1, int(args[args.index("--max-shorts") + 1]))
+        except (ValueError, IndexError):
+            die("--max-shorts requires a positive integer")
 
     cfg = load_config()
     raw_dir = os.path.join(HERE, cfg.get("raw_dir", "raw"))
@@ -341,7 +353,8 @@ def main():
         return
 
     manifest = process_pending(cfg, raw_dir, output_dir, ffmpeg, ffprobe,
-                               dry_run, force, watch=False)
+                               dry_run, force, watch=False,
+                               max_shorts=max_shorts)
     if dry_run:
         print("\nDRY RUN - nothing was written.")
     else:
