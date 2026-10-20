@@ -98,17 +98,12 @@ def main():
 
     cfg = load_config()
     daily = int(cfg.get("daily_shorts", 5))
-    start = datetime.strptime(cfg["start_date"], "%Y-%m-%d").date()
     today = datetime.now().date()
-    days_elapsed = (today - start).days
-    if days_elapsed < 0:
-        print(f"Start date is in the future ({cfg['start_date']}). Nothing to do.")
-        sys.exit(0)
 
     date_str = today.strftime("%Y-%m-%d")
     batch_dir = get_batch_dir(cfg, date_str)
     emoji = status_emoji(batch_dir)
-    print(f"\n\U0001f4c5 {date_str} {emoji}  (day {days_elapsed + 1}, target: {daily} shorts)")
+    print(f"\n\U0001f4c5 {date_str} {emoji}  (fresh batch, target: {daily} shorts)")
 
     if batch_dir.exists() and (batch_dir / "status.json").exists():
         with open(batch_dir / "status.json", "r", encoding="utf-8") as f:
@@ -122,8 +117,8 @@ def main():
     shorts_dir = HERE / cfg["output_dir"]
     manifest_path = shorts_dir / "manifest.json"
 
-    offset = days_elapsed * daily
-    needed_total = offset + daily
+    offset = 0
+    needed_total = daily
     existing_shorts = sorted(shorts_dir.glob("s*.mp4"))
     available_before = len(existing_shorts)
 
@@ -155,7 +150,7 @@ def main():
 
         batch_shorts = all_shorts[offset:offset + daily]
         if len(batch_shorts) < daily:
-            raise RuntimeError(f"Not enough new shorts for day {days_elapsed + 1}. Need {daily}, have {len(batch_shorts)}.")
+            raise RuntimeError(f"Not enough Shorts for today's fresh batch. Need {daily}, have {len(batch_shorts)}.")
 
         for i, src in enumerate(batch_shorts, 1):
             dest = batch_dir / src.name
