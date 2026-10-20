@@ -99,9 +99,13 @@ def get_credentials():
     if creds and creds.valid:
         return creds
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        save_credentials(creds)
-        return creds
+        try:
+            creds.refresh(Request())
+            save_credentials(creds)
+            return creds
+        except Exception as exc:
+            print(f"Saved YouTube token could not be refreshed ({exc}).")
+            print("Starting a fresh browser authorization.")
 
     flow = Flow.from_client_secrets_file(SECRETS_PATH, scopes=SCOPES,
                                          redirect_uri=REDIRECT_URI)
@@ -255,6 +259,8 @@ def main():
 
     print(f"done: {ok_count} uploaded, {fail_count} failed, "
           f"{len(todo) - ok_count - fail_count} left.")
+    if fail_count or len(todo) != ok_count:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
