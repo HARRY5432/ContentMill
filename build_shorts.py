@@ -89,6 +89,38 @@ def save_manifest(output_dir, manifest):
         json.dump(manifest, f, indent=2)
 
 
+def recover_manifest(output_dir, raw_dir, ffprobe, short_seconds):
+    """Recover metadata after an interrupted build that created the MP4s first.
+
+    Older runs could finish all encodes and be interrupted before manifest.json
+    was written. Reusing those clips is both faster and safer than encoding the
+    same source again.
+    """
+    existing = {n.lower() for n in os.listdir(output_dir)}
+    recovered = []
+    next_index = 1
+    for src in list_videos(raw_dir, strict=False):
+        dur = probe_duration(ffprobe, src) if ffprobe else None
+        if dur is None:
+            continue
+        t = 0.0
+        entries = []
+        while t < dur:
+            name = f"s{next_index:03d}.mp4"
+            w = min(short_seconds, dur - t)
+            entries.append({"short": name, "source": os.path.basename(src),
+                            "start": round(t, 3), "duration": round(w, 3)})
+            next_index += 1
+            t += w
+        if all(e["short"].lower() in existing for e in entries):
+            recovered.extend(entries)
+        else:
+            # Do not mark a partially encoded source as consumed; the normal
+            # planner will rebuild it on the next run.
+            break
+    return recovered
+
+
 def consumed_sources(manifest):
     return {entry.get("source") for entry in manifest}
 
@@ -169,7 +201,13 @@ def process_pending(cfg, raw_dir, output_dir, ffmpeg, ffprobe,
     if warned is None:
         warned = set()
 
+    short_seconds = float(cfg.get("short_seconds", 45))
     manifest = [] if force else load_manifest(output_dir)
+    if not force and not manifest and os.listdir(output_dir):
+        manifest = recover_manifest(output_dir, raw_dir, ffprobe, short_seconds)
+        if manifest:
+            save_manifest(output_dir, manifest)
+            print(f"Recovered manifest for {len(manifest)} existing short(s).")
     done_sources = consumed_sources(manifest) if not force else set()
     skip = set(cfg.get("skip_files", []))
     pending = []
@@ -184,8 +222,6 @@ def process_pending(cfg, raw_dir, output_dir, ffmpeg, ffprobe,
 
     if not pending:
         return manifest
-
-    short_seconds = float(cfg.get("short_seconds", 45))
 
     jobs = []
     planned = {}
