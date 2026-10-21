@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -189,6 +190,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="validate locally; no network or upload")
     parser.add_argument("--verify", action="store_true", help="login and print the account username only")
     parser.add_argument("--trial", action="store_true", help="send one trial reel instead of the full batch")
+    parser.add_argument("--pause-seconds", type=int, default=60,
+                        help="wait between normal uploads (default: 60)")
     args = parser.parse_args()
 
     try:
@@ -218,10 +221,14 @@ def main():
         state_file = state_path(acct, batch)
         state = load_state(state_file)
         uploaded = state.setdefault("uploaded", {})
+        posted_count = 0
         for item in items:
             if item["name"] in uploaded:
                 print(f"Skipping already recorded upload: {item['name']}")
                 continue
+            if posted_count and not args.trial and args.pause_seconds > 0:
+                print(f"Waiting {args.pause_seconds}s before the next upload...")
+                time.sleep(args.pause_seconds)
             cover = item["cover"] or ensure_thumbnail(Path(item["path"]))
             print(f"Uploading {item['name']}...")
             media = client.clip_upload(
@@ -236,6 +243,7 @@ def main():
             }
             save_state(state_file, state)
             print(f"  Posted {item['name']}")
+            posted_count += 1
         print(f"Done. State: {state_file}")
         return 0
     except Exception as exc:
