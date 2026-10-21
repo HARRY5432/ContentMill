@@ -55,6 +55,35 @@ The command exits safely when Telegram is not configured. Pipeline errors are
 reported without exposing credentials, and dynamic message content is escaped
 for Telegram HTML mode.
 
+## Instagram publishing
+
+The Instagram adapter uses one account folder at a time. Each folder contains
+an exported Instagram cookie JSON file and is ignored by Git:
+
+```text
+accounts/account_2/<instagram-cookie-export>.txt
+accounts/account_3/<instagram-cookie-export>.txt
+accounts/account_4/<instagram-cookie-export>.txt
+```
+
+Validate the current Shorts batch without network access:
+
+```bash
+python instagram_upload.py --account account_2 --dry-run
+```
+
+Verify the account identity without posting:
+
+```bash
+python instagram_upload.py --account account_2 --verify
+```
+
+The uploader converts each Shorts sidecar (`TITLE`, `DESCRIPTION`, and `TAGS`)
+into an Instagram caption, limits it to Instagram's caption size, and keeps a
+separate idempotency state file per account and batch. Use `--trial` for one
+trial reel only; never run a real upload until the verified username is the
+intended account.
+
 ## Settings (`config.json`)
 
 | Setting | What it does |
