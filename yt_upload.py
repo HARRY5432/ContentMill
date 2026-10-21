@@ -36,6 +36,7 @@ from googleapiclient.http import MediaFileUpload
 HERE = os.path.dirname(os.path.abspath(__file__))
 SECRETS_PATH = os.path.join(HERE, "client_secrets.json")
 TOKEN_PATH = os.path.join(HERE, "token.json")
+ACCOUNTS_DIR = os.path.join(HERE, "accounts")
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 REDIRECT_URI = "http://localhost:8080/oauth2callback"
 UPLOAD_PORT = 8080
@@ -83,10 +84,27 @@ class _OAuthHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def get_credentials():
+def account_paths(account):
+    if not account:
+        return SECRETS_PATH, TOKEN_PATH
+    if not re.fullmatch(r"account_[0-9]+", account):
+        raise ValueError("account must look like account_2")
+    account_dir = os.path.join(ACCOUNTS_DIR, account)
+    if not os.path.isdir(account_dir):
+        raise FileNotFoundError(f"account folder not found: {account_dir}")
+    secrets_path = os.path.join(account_dir, "client_secrets.json")
+    if not os.path.exists(secrets_path):
+        candidates = [os.path.join(account_dir, n) for n in os.listdir(account_dir)
+                      if n.startswith("client_secret_") and n.endswith(".json")]
+        if len(candidates) == 1:
+            secrets_path = candidates[0]
+    return secrets_path, os.path.join(account_dir, "token.json")
+
+
+def get_credentials(secrets_path, token_path):
     creds = None
-    if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, "r", encoding="utf-8") as f:
+    if os.path.exists(token_path):
+        with open(token_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         creds = Credentials(
             token=data.get("token"),
@@ -101,13 +119,15 @@ def get_credentials():
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            save_credentials(creds)
+            save_credentials(creds, token_path)
             return creds
         except Exception as exc:
             print(f"Saved YouTube token could not be refreshed ({exc}).")
             print("Starting a fresh browser authorization.")
 
-    flow = Flow.from_client_secrets_file(SECRETS_PATH, scopes=SCOPES,
+    if not os.path.exists(secrets_path):
+        raise FileNotFoundError(f"OAuth client file missing: {secrets_path}")
+    flow = Flow.from_client_secrets_file(secrets_path, scopes=SCOPES,
                                          redirect_uri=REDIRECT_URI)
     auth_url, _ = flow.authorization_url(access_type="offline",
                                          prompt="consent",
@@ -124,19 +144,34 @@ def get_credentials():
 
     flow.fetch_token(code=_OAuthHandler.code)
     creds = flow.credentials
-    save_credentials(creds)
+    save_credentials(creds, token_path)
     print("Login OK - token saved for future runs.\n")
     return creds
 
 
-def save_credentials(creds):
-    with open(TOKEN_PATH, "w", encoding="utf-8") as f:
+def save_credentials(creds, token_path):
+    with open(token_path, "w", encoding="utf-8") as f:
         json.dump({
             "token": creds.token,
             "refresh_token": creds.refresh_token,
             "client_id": creds.client_id,
             "client_secret": creds.client_secret,
         }, f, indent=2)
+
+
+def get_channel_identity(youtube):
+    response = youtube.channels().list(
+        part="snippet", mine=True, maxResults=1).execute()
+    items = response.get("items", [])
+    if not items:
+        raise RuntimeError("OAuth succeeded, but no YouTube channel was found")
+    item = items[0]
+    snippet = item.get("snippet", {})
+    return {
+        "id": item.get("id", ""),
+        "title": snippet.get("title", "(unnamed channel)"),
+        "custom_url": snippet.get("customUrl", ""),
+    }
 
 
 def upload_one(youtube, video_path, meta, privacy):
@@ -181,6 +216,10 @@ def main():
                     choices=["private", "unlisted", "public"])
     ap.add_argument("--category", default=None,
                     help="YouTube categoryId e.g. 24=Entertainment, 22=People & Blogs")
+    ap.add_argument("--account", default=None,
+                    help="account folder such as account_2; stores its own token/state")
+    ap.add_argument("--verify-only", action="store_true",
+                    help="authenticate and print the channel identity without uploading")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -190,7 +229,8 @@ def main():
         sys.exit(1)
 
     videos = sorted(n for n in os.listdir(batch_dir) if n.lower().endswith(".mp4"))
-    state_path = os.path.join(batch_dir, "uploaded.json")
+    state_name = f"uploaded_{args.account}.json" if args.account else "uploaded.json"
+    state_path = os.path.join(batch_dir, state_name)
     uploaded = {}
     if os.path.exists(state_path):
         try:
@@ -205,11 +245,29 @@ def main():
 
     youtube = None
     if not args.dry_run:
-        if not os.path.exists(SECRETS_PATH):
-            print("ERROR: client_secrets.json missing next to this script.")
+        try:
+            secrets_path, token_path = account_paths(args.account)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"ERROR: {exc}")
             sys.exit(1)
-        creds = get_credentials()
+        if not os.path.exists(secrets_path):
+            print(f"ERROR: OAuth client file missing: {secrets_path}")
+            sys.exit(1)
+        creds = get_credentials(secrets_path, token_path)
         youtube = build("youtube", "v3", credentials=creds)
+        try:
+            identity = get_channel_identity(youtube)
+        except Exception as exc:
+            print(f"ERROR: Could not verify the YouTube channel: {exc}")
+            sys.exit(1)
+        label = identity["title"]
+        if identity["custom_url"]:
+            label += f" ({identity['custom_url']})"
+        print(f"Authenticated YouTube channel: {label}")
+        print(f"Channel ID: {identity['id']}")
+        if args.verify_only:
+            print("Verification only: no videos uploaded.")
+            return
 
     print(f"{len(todo)} of {len(videos)} video(s) to upload "
           f"(privacy={args.privacy}, dry_run={args.dry_run})\n")
