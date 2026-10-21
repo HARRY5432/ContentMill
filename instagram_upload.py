@@ -17,6 +17,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -103,6 +105,26 @@ def instagram_caption(video_path):
     return caption[:2200]
 
 
+def ensure_thumbnail(video_path):
+    """Create a small first-frame cover with FFmpeg when the batch has none."""
+    cover = video_path.with_suffix(".jpg")
+    if cover.exists() and cover.stat().st_size > 0:
+        return cover
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required to create Instagram covers")
+    cmd = [
+        ffmpeg, "-y", "-ss", "0.5", "-i", str(video_path),
+        "-frames:v", "1", "-vf", "scale=720:-2", "-q:v", "4", str(cover),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=120)
+    if result.returncode != 0 or not cover.exists() or cover.stat().st_size == 0:
+        cover.unlink(missing_ok=True)
+        raise RuntimeError(f"could not create cover for {video_path.name}: {result.stderr[-300:]}")
+    return cover
+
+
 def batch_items(batch):
     videos = sorted(batch.glob("*.mp4"))
     if not videos:
@@ -110,9 +132,11 @@ def batch_items(batch):
     items = []
     for video in videos:
         caption = instagram_caption(video)
+        cover = video.with_suffix(".jpg")
         items.append({
             "name": video.name,
             "path": video,
+            "cover": cover if cover.exists() else None,
             "caption": caption,
             "caption_sha256": hashlib.sha256(caption.encode()).hexdigest(),
         })
@@ -198,9 +222,11 @@ def main():
             if item["name"] in uploaded:
                 print(f"Skipping already recorded upload: {item['name']}")
                 continue
+            cover = item["cover"] or ensure_thumbnail(Path(item["path"]))
             print(f"Uploading {item['name']}...")
             media = client.clip_upload(
-                Path(item["path"]), item["caption"], trial=args.trial
+                Path(item["path"]), item["caption"], thumbnail=cover,
+                trial=args.trial
             )
             uploaded[item["name"]] = {
                 "status": "trial" if args.trial else "posted",
